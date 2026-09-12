@@ -44,21 +44,30 @@ export interface DailyStats {
   studyMinutes: number;
 }
 
+export interface QuickNote {
+  id?: number;
+  text: string;
+  completed: boolean;
+  createdAt: string; // YYYY-MM-DD
+}
+
 export class AppDatabase extends Dexie {
   userProfile!: Table<UserProfile>;
   subjects!: Table<Subject>;
   taskClaims!: Table<TaskClaim>;
   mealLogs!: Table<MealLog>;
   dailyStats!: Table<DailyStats>;
+  quickNotes!: Table<QuickNote>;
 
   constructor() {
     super('HabitosEstudioDB');
-    this.version(6).stores({
+    this.version(7).stores({
       userProfile: '++id',
       subjects: '++id, name, examDate',
       taskClaims: '++id, taskId, date, [taskId+date]',
       mealLogs: '++id, date',
-      dailyStats: '++id, date'
+      dailyStats: '++id, date',
+      quickNotes: '++id, createdAt, completed'
     });
   }
 }

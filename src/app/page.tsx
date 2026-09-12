@@ -1,41 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-type UserProfile = {
-  id?: number; name: string; weight: number; height: number;
-  goal: 'muscle_gain' | 'fat_loss' | 'maintenance';
-  workoutLocation: 'gym' | 'home'; xp: number; level: number;
-  streak: number; lastActiveDate: string;
-};
-type Subject = { id?: number; name: string; examDate: string; topics: string[] };
-type TaskClaim = { id?: number; taskId: string; date: string; claimed: boolean };
-type MealLog = { id?: number; date: string; breakfast: boolean; lunch: boolean; snack: boolean; dinner: boolean; waterGlasses: number };
-type DailyStats = { id?: number; date: string; xpEarned: number; studyMinutes: number };
-
-type Row = Record<string, unknown> & { id?: number };
-const table = <T extends Row>(name: string) => {
-  const read = (): T[] => {
-    if (typeof window === 'undefined') return [];
-    try { return JSON.parse(localStorage.getItem(`habits-${name}`) || '[]') as T[]; } catch { return []; }
-  };
-  const write = (rows: T[]) => localStorage.setItem(`habits-${name}`, JSON.stringify(rows));
-  return {
-    async toArray() { return read(); },
-    async first() { return read()[0]; },
-    async add(value: T) { const rows = read(); const id = rows.reduce((max, row) => Math.max(max, row.id || 0), 0) + 1; write([...rows, { ...value, id }]); return id; },
-    async update(id: number, changes: Partial<T>) { write(read().map(row => row.id === id ? { ...row, ...changes } : row)); },
-    async delete(id: number) { write(read().filter(row => row.id !== id)); },
-    where(fieldOrQuery: string | Partial<T>) {
-      const match = (row: T) => typeof fieldOrQuery === 'string' ? row : Object.entries(fieldOrQuery).every(([key, value]) => row[key] === value);
-      return { equals: async (value: unknown) => ({ first: async () => read().find(row => row[fieldOrQuery as string] === value), toArray: async () => read().filter(row => row[fieldOrQuery as string] === value) }), first: async () => read().find(match) };
-    }
-  };
-};
-const db = {
-  userProfile: table<UserProfile>('userProfile'), subjects: table<Subject>('subjects'),
-  taskClaims: table<TaskClaim>('taskClaims'), mealLogs: table<MealLog>('mealLogs'),
-  dailyStats: table<DailyStats>('dailyStats')
-};
+import { db, UserProfile, Subject, TaskClaim, MealLog, DailyStats, QuickNote } from '@/app/lib/db';
 import { 
   Target, 
   Zap, 
@@ -59,15 +25,41 @@ import {
   Flame,
   BarChart3,
   TrendingUp,
-  Activity
+  Activity,
+  StickyNote,
+  Quote
 } from 'lucide-react';
 
-// Sistema de Rangos y Mascotas/Evolución
+// Sistema de Rangos
 const RANKS = [
   { minLevel: 1, title: 'Novato', badge: '🌱', desc: 'Construyendo cimientos de disciplina.' },
   { minLevel: 5, title: 'Estudiante de Sistemas', badge: '💻', desc: 'Optimizando rutinas y algoritmos de estudio.' },
   { minLevel: 10, title: 'Ingeniero en Potencia', badge: '⚡', desc: 'Alto rendimiento académico y físico.' },
   { minLevel: 20, title: 'Máster de Hábitos', badge: '👑', desc: 'Ejecución impecable sin fricción.' }
+];
+
+// Colección de Frases Motivadoras Diarias
+const MOTIVATIONAL_QUOTES = [
+  "Persigue tus sueños con ejecución implacable.",
+  "La disciplina vence a la motivación en cualquier escenario.",
+  "Construye hoy el futuro que deseas liderar mañana.",
+  "El éxito es la suma de pequeñas victorias diarias repetidas.",
+  "Tu único límite es la excusa que decides creerte.",
+  "Enfócate en el proceso y los resultados llegarán solos.",
+  "Cada hora de estudio y entreno es una inversión en tu mejor versión.",
+  "No pares cuando estés cansado, para cuando hayas terminado.",
+  "Domina tu mente y dominarás tus resultados.",
+  "Pequeños hábitos constantes construyen imperios.",
+  "La constancia transforma el esfuerzo ordinario en resultados extraordinarios.",
+  "Visualiza tu meta y no te desvíes del camino.",
+  "Hazlo hoy, tu 'yo' del futuro te lo agradecerá.",
+  "El trabajo duro en silencio dejará que tu éxito haga el ruido.",
+  "No busques comodidad, busca superación diaria.",
+  "Controla tus días antes de que tus días te controlen a ti.",
+  "La excelencia no es un acto, es un hábito diario.",
+  "Crea la disciplina que tu visión requiere.",
+  "Menos excusas, más ejecución quirúrgica.",
+  "Lo que haces hoy define en quién te convertirás mañana."
 ];
 
 export default function Home() {
@@ -91,11 +83,15 @@ export default function Home() {
   const [timeLeft, setTimeLeft] = useState(900);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
 
-  // Módulo Universitario
+  // Módulo Estudios
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [newSubjectName, setNewSubjectName] = useState('');
   const [newExamDate, setNewExamDate] = useState('');
   const [newTopics, setNewTopics] = useState('');
+
+  // Módulo Notas Rápidas
+  const [notes, setNotes] = useState<QuickNote[]>([]);
+  const [newNoteText, setNewNoteText] = useState('');
 
   // Registro de Cobros Anti-Exploit
   const [claimedTaskIds, setClaimedTaskIds] = useState<Set<string>>(new Set());
@@ -122,7 +118,7 @@ export default function Home() {
       const today = new Date().toISOString().split('T')[0];
 
       // Cargar o crear Perfil
-      let userProf = await db.userProfile.first();
+      let userProf = await db.userProfile.toCollection().first();
       if (!userProf) {
         const defaultProfile: UserProfile = {
           name: 'Tizi',
@@ -144,18 +140,17 @@ export default function Home() {
       const loadedSubjects = await db.subjects.toArray();
       setSubjects(loadedSubjects);
 
+      // Cargar Notas Rápidas
+      const loadedNotes = await db.quickNotes.toArray();
+      setNotes(loadedNotes);
+
       // Cargar Reclamos del Día (Anti-Exploit)
-      const claimsToday: TaskClaim[] = await (await db.taskClaims.where('date').equals(today)).toArray();
-      const claimedSet = new Set<string>();
-      claimsToday.forEach((claim: TaskClaim) => {
-        if (claim.claimed && typeof claim.taskId === 'string') {
-          claimedSet.add(claim.taskId);
-        }
-      });
+      const claimsToday: TaskClaim[] = await db.taskClaims.where('date').equals(today).toArray();
+      const claimedSet = new Set(claimsToday.filter((c: TaskClaim) => c.claimed).map((c: TaskClaim) => c.taskId));
       setClaimedTaskIds(claimedSet);
 
       // Cargar Comidas del Día
-      const mealToday = await (await db.mealLogs.where('date').equals(today)).first();
+      const mealToday = await db.mealLogs.where('date').equals(today).first();
       if (mealToday) {
         setMeals({
           breakfast: mealToday.breakfast,
@@ -184,7 +179,7 @@ export default function Home() {
       const dateStr = d.toISOString().split('T')[0];
       const dayLabel = daysName[d.getDay()];
 
-      const stat = await (await db.dailyStats.where('date').equals(dateStr)).first();
+      const stat = await db.dailyStats.where('date').equals(dateStr).first();
       result.push({
         day: dayLabel,
         date: dateStr,
@@ -193,6 +188,17 @@ export default function Home() {
     }
 
     setWeeklyStats(result);
+  };
+
+  // Frase Motivadora Diaria (Cambia automáticamente cada 24hs según la fecha)
+  const getDailyQuote = () => {
+    const today = new Date();
+    const start = new Date(today.getFullYear(), 0, 0);
+    const diff = today.getTime() - start.getTime();
+    const oneDay = 1000 * 60 * 60 * 24;
+    const dayOfYear = Math.floor(diff / oneDay);
+    const index = dayOfYear % MOTIVATIONAL_QUOTES.length;
+    return MOTIVATIONAL_QUOTES[index];
   };
 
   // Guardar Cambios de Perfil
@@ -204,17 +210,15 @@ export default function Home() {
     }
   };
 
-  // Lógica Anti-Exploit para Reclamar XP y guardar en Estadísticas
+  // Lógica Anti-Exploit para Reclamar XP
   const claimXP = async (taskId: string, amount: number) => {
     const today = new Date().toISOString().split('T')[0];
 
-    // Verificar si ya fue cobrada hoy en la base de datos
     const existing = await db.taskClaims.where({ taskId, date: today }).first();
     if (existing && existing.claimed) {
-      return; // Ya cobrado hoy, se ignora
+      return;
     }
 
-    // Registrar cobro en IndexedDB
     if (existing && existing.id) {
       await db.taskClaims.update(existing.id, { claimed: true });
     } else {
@@ -223,15 +227,13 @@ export default function Home() {
 
     setClaimedTaskIds(prev => new Set(prev).add(taskId));
 
-    // Guardar en DailyStats
-    const currentDailyStat = await (await db.dailyStats.where('date').equals(today)).first();
+    const currentDailyStat = await db.dailyStats.where('date').equals(today).first();
     if (currentDailyStat && currentDailyStat.id) {
       await db.dailyStats.update(currentDailyStat.id, { xpEarned: currentDailyStat.xpEarned + amount });
     } else {
       await db.dailyStats.add({ date: today, xpEarned: amount, studyMinutes: 0 });
     }
 
-    // Sumar XP al perfil y nivelar
     let newXp = profile.xp + amount;
     let newLevel = profile.level;
     const requiredXp = newLevel * 100;
@@ -248,12 +250,12 @@ export default function Home() {
   // Rango Actual
   const currentRank = [...RANKS].reverse().find(r => profile.level >= r.minLevel) || RANKS[0];
 
-  // Cálculo Dinámico de las 3 Claves No Negociables
+  // Cálculo Dinámico de las 5 CLAVES NO NEGOCIABLES
   const getDynamicCoreTasks = () => {
     const today = new Date().toISOString().split('T')[0];
     const tasks = [];
 
-    // Tarea 1: Estudio Urgente
+    // Clave 1: Estudio Urgente
     const sortedSubjects = [...subjects]
       .filter(s => new Date(s.examDate) >= new Date(today))
       .sort((a, b) => new Date(a.examDate).getTime() - new Date(b.examDate).getTime());
@@ -265,35 +267,102 @@ export default function Home() {
         id: `study-priority-${today}`,
         title: `Estudiar ${closest.name}`,
         subtitle: `Examen en ${days} días. Repasar: ${closest.topics[0] || 'Temario principal'}`,
-        xp: 40
+        xp: 30
       });
     } else {
       tasks.push({
         id: `study-generic-${today}`,
         title: `Bloque de Lógica / Programación`,
         subtitle: `Completar 45 minutos de estudio técnico enfocado.`,
-        xp: 30
+        xp: 25
       });
     }
 
-    // Tarea 2: Nutrición y Salud
+    // Clave 2: Nutrición y Salud
     const proteinTarget = Math.round(profile.weight * 2);
     tasks.push({
       id: `nutrition-target-${today}`,
       title: `Plan de Comidas (${profile.goal === 'muscle_gain' ? 'Volumen Muscular' : 'Mantenimiento'})`,
       subtitle: `Asegurar aporte calórico y ~${proteinTarget}g de proteína diaria.`,
+      xp: 20
+    });
+
+    // Clave 3: Entrenamiento / Movilidad
+    tasks.push({
+      id: `workout-target-${today}`,
+      title: `Sesión de Entrenar (${profile.workoutLocation === 'gym' ? 'Gimnasio' : 'Casa/Calistenia'})`,
+      subtitle: `Completar rutina de hipertrofia o movilidad intensa.`,
       xp: 25
     });
 
-    // Tarea 3: Descanso e Higiene de Sueño
-    tasks.push({
-      id: `sleep-prep-${today}`,
-      title: `Cierre Nocturno a las 23:00`,
-      subtitle: `Apagar pantallas 1h antes para optimizar hormona de crecimiento.`,
-      xp: 25
-    });
+    // Clave 4 y 5: Integración Dinámica de Notas Personales Pendientes
+    const activeNotes = notes.filter(n => !n.completed);
+    if (activeNotes.length > 0) {
+      tasks.push({
+        id: `note-task-${activeNotes[0].id}-${today}`,
+        title: `Nota: ${activeNotes[0].text}`,
+        subtitle: `Tarea personal pendiente agendada.`,
+        xp: 15
+      });
+    } else {
+      tasks.push({
+        id: `habit-water-${today}`,
+        title: `Meta de Hidratación (2.5L de Agua)`,
+        subtitle: `Completar los 8 vasos de agua del día.`,
+        xp: 15
+      });
+    }
+
+    if (activeNotes.length > 1) {
+      tasks.push({
+        id: `note-task-${activeNotes[1].id}-${today}`,
+        title: `Nota: ${activeNotes[1].text}`,
+        subtitle: `Tarea personal pendiente agendada.`,
+        xp: 15
+      });
+    } else {
+      tasks.push({
+        id: `sleep-prep-${today}`,
+        title: `Cierre Nocturno a las 23:00`,
+        subtitle: `Apagar pantallas 1h antes para optimizar descanso.`,
+        xp: 20
+      });
+    }
 
     return tasks;
+  };
+
+  // Gestión de Notas Rápidas
+  const handleAddNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newNoteText.trim()) return;
+
+    const today = new Date().toISOString().split('T')[0];
+    const newNote: QuickNote = {
+      text: newNoteText.trim(),
+      completed: false,
+      createdAt: today
+    };
+
+    const id = await db.quickNotes.add(newNote);
+    setNotes(prev => [...prev, { ...newNote, id }]);
+    setNewNoteText('');
+  };
+
+  const toggleNote = async (id?: number) => {
+    if (!id) return;
+    const note = notes.find(n => n.id === id);
+    if (!note) return;
+
+    const updatedStatus = !note.completed;
+    await db.quickNotes.update(id, { completed: updatedStatus });
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, completed: updatedStatus } : n));
+  };
+
+  const handleDeleteNote = async (id?: number) => {
+    if (!id) return;
+    await db.quickNotes.delete(id);
+    setNotes(prev => prev.filter(n => n.id !== id));
   };
 
   // Bloques de Estudio Quirúrgico
@@ -334,7 +403,6 @@ export default function Home() {
       .sort((a, b) => a.daysLeft - b.daysLeft);
   };
 
-  // Materia Nuevas
   const handleAddSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSubjectName || !newExamDate) return;
@@ -366,14 +434,14 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [isTimerRunning, timeLeft]);
 
-  // Actualización de Comidas en DB
+  // Comidas y Agua
   const toggleMeal = async (type: keyof typeof meals) => {
     const updated = !meals[type];
     const newMeals = { ...meals, [type]: updated };
     setMeals(newMeals);
 
     const today = new Date().toISOString().split('T')[0];
-    const existing = await (await db.mealLogs.where('date').equals(today)).first();
+    const existing = await db.mealLogs.where('date').equals(today).first();
 
     if (existing && existing.id) {
       await db.mealLogs.update(existing.id, { ...newMeals, waterGlasses: water });
@@ -391,7 +459,7 @@ export default function Home() {
     setWater(newWater);
 
     const today = new Date().toISOString().split('T')[0];
-    const existing = await (await db.mealLogs.where('date').equals(today)).first();
+    const existing = await db.mealLogs.where('date').equals(today).first();
 
     if (existing && existing.id) {
       await db.mealLogs.update(existing.id, { waterGlasses: newWater });
@@ -404,7 +472,7 @@ export default function Home() {
     }
   };
 
-  // MOTOR CULINARIO CON RECETAS COHERENTES Y PASOS PRECISOS
+  // Motor Culinario
   const generateRecipeIdea = () => {
     if (!ingredients.trim()) {
       setGeneratedMenu(null);
@@ -437,7 +505,6 @@ export default function Home() {
       }
     };
 
-    // Caso 1: Mezcla de Panqueques / Crepes (Huevo + Harina/Avena + Leche/Agua)
     if (hasEgg && hasFlour) {
       menu.desayuno = {
         name: 'Panqueques Proteicos de Avena/Harina',
@@ -449,7 +516,6 @@ export default function Home() {
       };
     }
 
-    // Caso 2: Pollo / Carne / Atún + Arroz / Papa
     if (hasChicken && hasRice) {
       menu.almuerzo = {
         name: 'Bowl de Volumen (Pollo/Atún con Arroz/Papa)',
@@ -510,7 +576,7 @@ export default function Home() {
               onClick={() => setActiveTab('study')} 
               className={`flex items-center gap-3 p-3 rounded-xl transition font-medium text-xs ${activeTab === 'study' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-neutral-400 hover:bg-neutral-800/60'}`}
             >
-              <BookOpen className="w-4 h-4" /> Universidad
+              <BookOpen className="w-4 h-4" /> Estudios
             </button>
             <button 
               onClick={() => setActiveTab('nutrition')} 
@@ -581,6 +647,15 @@ export default function Home() {
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
             
+            {/* FRASE MOTIVADORA DIARIA */}
+            <section className="bg-linear-to-r from-purple-950/40 via-neutral-900 to-neutral-900 border border-purple-500/20 p-4 rounded-2xl flex items-center gap-3 shadow-md">
+              <Quote className="w-6 h-6 text-purple-400 shrink-0" />
+              <div>
+                <span className="text-[10px] font-mono uppercase tracking-widest text-purple-400 font-bold">Mentalidad de Hoy</span>
+                <p className="text-xs italic text-neutral-200 font-medium mt-0.5">"{getDailyQuote()}"</p>
+              </div>
+            </section>
+
             {/* ENFOQUE RÁPIDO */}
             <section className="bg-linear-to-r from-emerald-950/60 to-neutral-900 border border-emerald-800/40 p-4.5 rounded-2xl flex items-center justify-between shadow-md">
               <div>
@@ -595,11 +670,11 @@ export default function Home() {
               </button>
             </section>
 
-            {/* 3 CLAVES DINÁMICAS NO NEGOCIABLES */}
+            {/* 5 CLAVES DINÁMICAS NO NEGOCIABLES */}
             <section className="bg-neutral-900 p-4.5 rounded-2xl border border-neutral-800 space-y-3.5 shadow-md">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-xs text-neutral-300 flex items-center gap-2 uppercase font-mono tracking-wider">
-                  <ShieldAlert className="w-4 h-4 text-emerald-400" /> 3 Claves Dinámicas del Día
+                  <ShieldAlert className="w-4 h-4 text-emerald-400" /> 5 Claves Dinámicas del Día
                 </h3>
                 <span className="text-[10px] text-neutral-500 font-mono">Anti-Exploit Activo</span>
               </div>
@@ -641,10 +716,63 @@ export default function Home() {
                 })}
               </div>
             </section>
+
+            {/* SECCIÓN DE NOTAS Y TAREAS VARIAS */}
+            <section className="bg-neutral-900 p-4.5 rounded-2xl border border-neutral-800 space-y-3.5 shadow-md">
+              <h3 className="font-bold text-xs text-neutral-300 flex items-center gap-2 uppercase font-mono tracking-wider">
+                <StickyNote className="w-4 h-4 text-emerald-400" /> Notas & Tareas Rápidas
+              </h3>
+              
+              <form onSubmit={handleAddNote} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="ej: Mañana tengo que limpiar, comprar atún..."
+                  value={newNoteText}
+                  onChange={(e) => setNewNoteText(e.target.value)}
+                  className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl p-2.5 text-xs text-neutral-100 placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="submit"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-neutral-950 font-bold px-4 py-2.5 rounded-xl text-xs transition flex items-center gap-1 shrink-0"
+                >
+                  <Plus className="w-4 h-4" /> Agregar
+                </button>
+              </form>
+
+              <div className="space-y-2 pt-1">
+                {notes.length === 0 ? (
+                  <p className="text-xs text-neutral-500 text-center py-2">No hay notas o tareas sueltas agendadas.</p>
+                ) : (
+                  notes.map((note) => (
+                    <div
+                      key={note.id}
+                      className="flex items-center justify-between p-3 rounded-xl bg-neutral-950 border border-neutral-800 text-xs"
+                    >
+                      <div 
+                        onClick={() => toggleNote(note.id)}
+                        className="flex items-center gap-2.5 cursor-pointer flex-1"
+                      >
+                        <CheckCircle2 className={`w-4 h-4 ${note.completed ? 'text-emerald-400' : 'text-neutral-700'}`} />
+                        <span className={`text-neutral-200 ${note.completed ? 'line-through text-neutral-500' : ''}`}>
+                          {note.text}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteNote(note.id)}
+                        className="text-neutral-600 hover:text-red-400 p-1 transition ml-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
           </div>
         )}
 
-        {/* VISTA: UNIVERSIDAD */}
+        {/* VISTA: ESTUDIOS */}
         {activeTab === 'study' && (
           <div className="space-y-6">
             
@@ -1007,7 +1135,7 @@ export default function Home() {
             <div className="space-y-2.5">
               {[
                 { key: 'screens', label: '📱 Apagar pantallas / Modo Avión activado' },
-                { key: 'plan', label: '📝 Dejar organizadas las 3 tareas de mañana' },
+                { key: 'plan', label: '📝 Dejar organizadas las 5 tareas de mañana' },
                 { key: 'relax', label: '📖 10 min de lectura física / Meditación' }
               ].map((step) => {
                 const isChecked = nightSteps[step.key as keyof typeof nightSteps];
@@ -1063,7 +1191,7 @@ export default function Home() {
           <Target className="w-5 h-5" /> <span className="text-[10px] font-medium">Home</span>
         </button>
         <button onClick={() => setActiveTab('study')} className={`flex flex-col items-center gap-1 ${activeTab === 'study' ? 'text-emerald-400' : 'text-neutral-500'}`}>
-          <BookOpen className="w-5 h-5" /> <span className="text-[10px] font-medium">Estudio</span>
+          <BookOpen className="w-5 h-5" /> <span className="text-[10px] font-medium">Estudios</span>
         </button>
         <button onClick={() => setActiveTab('nutrition')} className={`flex flex-col items-center gap-1 ${activeTab === 'nutrition' ? 'text-emerald-400' : 'text-neutral-500'}`}>
           <Utensils className="w-5 h-5" /> <span className="text-[10px] font-medium">Nutrición</span>
